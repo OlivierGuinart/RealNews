@@ -46,7 +46,8 @@ namespace RealNews
             Brush myBrush = new SolidBrush(this.ForeColor);
             if (fi.isRead == false)
             {
-                myBrush = new SolidBrush(Color.White);
+                // List of post from a RSS show up white on white otherwise
+                myBrush = Settings.DarkMode ? new SolidBrush(Color.White) : new SolidBrush(Color.Black);
                 f = new Font(f, FontStyle.Bold);
             }
             var sf = StringFormat.GenericTypographic;
