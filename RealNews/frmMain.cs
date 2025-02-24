@@ -586,8 +586,18 @@ namespace RealNews
                 };
 
                 StringBuilder sb = new StringBuilder(item.Description);
-                if (i.Attachment != "")
-                    sb.AppendLine("<br/> <a href='" + i.Attachment + "'>" + i.Attachment + "</a>");
+                if (!string.IsNullOrEmpty(i.Attachment))
+                {
+                    Regex imgTypesRegex = new Regex("\\.(jpg|jpeg|png|gif|bmp)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+                    if (imgTypesRegex.Matches(i.Attachment).Count > 0)
+                    {
+                        sb.AppendLine($"<br/> <img src=\"" + i.Attachment + "\"/>");
+                    }
+                    else
+                    {
+                        sb.AppendLine("<br/> <a href='" + i.Attachment + "'>" + i.Attachment + "</a>");
+                    }
+                }
 
                 if (item.SpecificItem.ExtraData != null)
                 {
@@ -618,26 +628,27 @@ namespace RealNews
                 }
                 var tempdesc = HtmlSanitizer.SanitizeHtml(sb.ToString());
 
-                List<string> imgs = new List<string>();
-                foreach (var img in GetImagesInHTMLString(tempdesc))
-                {
-                    imgs.Add(_imghrefregex.Match(img).Groups["href"].Value);
-                }
+                // Not replacing links to images anymore
+                //List<string> imgs = new List<string>();
+                //foreach (var img in GetImagesInHTMLString(tempdesc))
+                //{
+                //    imgs.Add(_imghrefregex.Match(img).Groups["href"].Value);
+                //}
 
-                foreach (var img in imgs)
-                {
-                    if (img.StartsWith("http://"))
-                        tempdesc = tempdesc.Replace(img, img.Replace("http://", _localhostimageurl));
-                    else
-                        tempdesc = tempdesc.Replace(img, img.Replace("https://", _localhostimageurl));
-                }
+                //foreach (var img in imgs)
+                //{
+                //    if (img.StartsWith("http://"))
+                //        tempdesc = tempdesc.Replace(img, img.Replace("http://", _localhostimageurl));
+                //    else
+                //        tempdesc = tempdesc.Replace(img, img.Replace("https://", _localhostimageurl));
+                //}
 
-                if (feed.DownloadImages)
-                    imgs.ForEach(x =>
-                    {
-                        if (_imageCache.Contains(x) == false)
-                            _downloadimglist.Enqueue(x);
-                    });
+                //if (feed.DownloadImages)
+                //    imgs.ForEach(x =>
+                //    {
+                //        if (_imageCache.Contains(x) == false)
+                //            _downloadimglist.Enqueue(x);
+                //    });
 
                 i.Description = tempdesc;
                 list.Add(i);
