@@ -541,6 +541,8 @@ namespace RealNews
 
         private void UpdateFeed(Feed feed, Action<string> log)
         {
+            Regex imgTypesRegex = new Regex("\\.(jpg|jpeg|png|gif|bmp)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            Regex imgTagWithoutHttpRegex = new Regex("<img.*src=\"\\/?(?!((http(s)?))).*\".*\\/>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
             var feedxml = "";
             if (feed != null && feed.URL != "")
             {
@@ -580,15 +582,38 @@ namespace RealNews
                     FeedName = feed.Title,
                     Id = item.Id,
                     Link = item.Link,
+                    Description = item.Description,
                     Attachment = item.SpecificItem.Enclosure != null ? item.SpecificItem.Enclosure.Url : "",
                     Categories = item.Categories.Count > 5 ? string.Join(", ", item.Categories.ToArray(), 0, 4) : string.Join(", ", item.Categories),
                     Author = item.Author
                 };
 
+                // Just in case there's a img truncated URL in description, append this truncated URL to the feed url and copy it to the Attachement field
+                // e.g bing images (<description><![CDATA[<img height="280" src="/th?id=OHR.GiantCuttlefish_EN-US2276053377_1920x1080.jpg&amp;rf=LaDigue_1920x1080.jpg&amp;pid=hp" usemap="#map1" border="0"/><map name="map1"></map>]]></description>)
+                if (imgTypesRegex.Matches(i.Description).Count > 0)
+                {
+                    if (imgTagWithoutHttpRegex.Matches(i.Description).Count > 0)
+                    {
+                        Uri uri = new Uri(feed.URL);
+                        string s = "http://" + uri.Host + _imghrefregex.Match(i.Description).Groups["href"].Value;
+                        // Checking if url resolves
+                        HttpWebRequest httpWebRequest = (HttpWebRequest)HttpWebRequest.Create(s);
+                        httpWebRequest.Method = "HEAD";
+                        try
+                        {
+                            httpWebRequest.GetResponse();
+                            i.Attachment = s;
+                        }
+                        catch(Exception e)
+                        {
+                            Log($"{e.Message} ('{s}' in item {i.Title} of feed {feed.Title})");
+                        }
+                    }
+                }
+
                 StringBuilder sb = new StringBuilder(item.Description);
                 if (!string.IsNullOrEmpty(i.Attachment))
                 {
-                    Regex imgTypesRegex = new Regex("\\.(jpg|jpeg|png|gif|bmp)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
                     if (imgTypesRegex.Matches(i.Attachment).Count > 0)
                     {
                         sb.AppendLine($"<br/> <img src=\"" + i.Attachment + "\"/>");
