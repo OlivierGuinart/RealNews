@@ -34,7 +34,7 @@ namespace RealNews
             var r = new urlhash
             {
                 folder = fol,
-                fn = fol + "/" + url.GetHashCode() + ".jpg"
+                fn = fol + "/" + url.GetHashCode() + url.Substring(url.LastIndexOf("."))
             };
 
             return r;
