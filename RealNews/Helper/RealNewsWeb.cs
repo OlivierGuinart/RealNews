@@ -36,7 +36,9 @@ namespace RealNews
                 {
                     o = _imgcache.Get(gstr);
                     if (o == null)
+                    {
                         o = Properties.Resources.notfound;
+                    }
                 }
                 WriteResponse(ctx, 200, o, false);
             });
@@ -46,21 +48,31 @@ namespace RealNews
         {
             if (path == "style.css")
             {
+                string appDirectory = AppDomain.CurrentDomain.BaseDirectory;
                 OutPutContentType(ctx, ".css");
-                WriteResponse(ctx, 200, File.ReadAllText("configs\\style.css"));
-            }
-            else if (path == "api/star.png")
-            {
-                OutPutContentType(ctx, ".png");
-                var ms = new MemoryStream();
-                if (Settings.DarkMode)
-                    Properties.Resources.star1.Save(ms, ImageFormat.Png);
-                else
-                    Properties.Resources.Star.Save(ms, ImageFormat.Png);
-                WriteResponse(ctx, 200, ms.ToArray(), false);
+                WriteResponse(ctx, 200, File.ReadAllText(Path.Combine(appDirectory,"configs\\style.css")));
             }
             else
-                base.ServeFile(ctx, path);
+            {
+                if (path == "api/star.png")
+                {
+                    OutPutContentType(ctx, ".png");
+                    var ms = new MemoryStream();
+                    if (Settings.DarkMode)
+                    {
+                        Properties.Resources.star1.Save(ms, ImageFormat.Png);
+                    }
+                    else
+                    {
+                        Properties.Resources.Star.Save(ms, ImageFormat.Png);
+                    }
+                    WriteResponse(ctx, 200, ms.ToArray(), false);
+                }
+                else
+                {
+                    base.ServeFile(ctx, path);
+                }
+            }
         }
     }
 }
