@@ -58,6 +58,8 @@ namespace RealNews
                     ctx.Response.ContentType = "image/jpeg"; break;
                 case ".gif":
                     ctx.Response.ContentType = "image/gif"; break;
+                case ".webp":
+                    ctx.Response.ContentType = "image/webp"; break;
                 case ".mht":
                     compress = true;
                     ctx.Response.ContentType = "multipart/related"; break;
