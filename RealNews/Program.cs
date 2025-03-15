@@ -17,7 +17,10 @@ namespace RealNews
         static void Main()
         {
             _path = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
-            if (_path.EndsWith("\\") == false) _path += "\\";
+            if (!_path.EndsWith("\\"))
+            {
+                _path += "\\";
+            }
 
             if (Singleinstance.Running(_path) == false)
             {
@@ -31,7 +34,8 @@ namespace RealNews
 
         private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
         {
-            File.AppendAllText("error.txt", e.ExceptionObject.ToString());
+            string appDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            File.AppendAllText(Path.Combine(appDirectory, "error.txt"), DateTime.UtcNow.ToString() + "\r\n" + e.ExceptionObject.ToString() + "\r\n");
             _log.Error(e);
         }
     }
