@@ -14,6 +14,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Westwind.Web.Utilities;
+using Message = System.Windows.Forms.Message;
 
 namespace RealNews
 {
@@ -21,9 +22,37 @@ namespace RealNews
     // TODO : download, cleanup on folder -> all feeds down
     // TODO : dark mode scrollbar colours
 
-    public partial class frmMain : Form
+    public partial class FrmMain : Form
     {
-        public frmMain()
+        private static readonly string _appDirectory = AppDomain.CurrentDomain.BaseDirectory;
+        RealNewsWeb web;
+        bool loaded = false;
+        List<Feed> _feeds = new List<Feed>();
+        ConcurrentDictionary<string, List<FeedItem>> _feeditems = new ConcurrentDictionary<string, List<FeedItem>>();
+        Feed _currentFeed = null;
+        string _feedTitle = "";
+        List<FeedItem> _currentList = null;
+        ConcurrentQueue<string> _downloadImgList = new ConcurrentQueue<string>();
+        private Regex _imghrefregex = new Regex("src\\s*=\\s*[\'\"]\\s*(?<href>.*?)\\s*[\'\"]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private FormWindowState _lastFormState = FormWindowState.Normal;
+        private JSONParameters jp = new JSONParameters { UseExtensions = false, UseEscapedUnicode = false, UseUTCDateTime = false };
+        private string _localhostimageurl = "http://localhost:{port}/api/image?";
+        private ImageCache _imageCache;
+        private static ILog _log = LogManager.GetLogger(typeof(FrmMain));
+        private System.Timers.Timer _minuteTimer;
+        private bool _newItemsExist = false;
+        private bool _DoDownloadImages = false;
+        private bool _run = true;
+        private int _visibleItems = 10;
+        Color _ThemeBackground = Color.White;
+        Color _ThemeNormal = Color.Black;
+        Color _ThemeHighLight = Color.Black;
+        CheckBox _menuCheckBox = new CheckBox();
+        private object _minlock = new object();
+        private int _minCount = 0;
+        private string _currhtml = "<html><link rel='stylesheet' href='http://localhost:" + Settings.webport + "/style.css'></html>";
+
+        public FrmMain()
         {
             InitializeComponent();
             (this.webBrowser1.ActiveXInstance as SHDocVw.WebBrowser).NewWindow3 += FrmMain_NewWindow3;
@@ -31,11 +60,24 @@ namespace RealNews
 
         protected override void WndProc(ref Message m)
         {
+            const int WM_QUERYENDSESSION = 0x0011;
+            const int WM_ENDSESSION = 0x0016;
+
+            if (m.Msg == WM_QUERYENDSESSION || m.Msg == WM_ENDSESSION)
+            {
+                // Handle shutdown logic here
+                Log("System is shutting down, closing app");
+                // Unhooking from the timer, in case shutting down takes sometime, we aren't updating any feeds anymore, just closing
+                _minuteTimer.Elapsed -= MinuteTimer_Elapsed;
+                _exit = true;
+            }
+
             if (m.Msg == Singleinstance._msgID && this.Visible == false)
             {
                 this.Show();
                 this.WindowState = _lastFormState;
             }
+
             base.WndProc(ref m);
         }
 
@@ -46,31 +88,6 @@ namespace RealNews
             Process.Start(bstrUrl);
         }
 
-        RealNewsWeb web;
-        bool loaded = false;
-        List<Feed> _feeds = new List<Feed>();
-        ConcurrentDictionary<string, List<FeedItem>> _feeditems = new ConcurrentDictionary<string, List<FeedItem>>();
-        Feed _currentFeed = null;
-        string _feedTitle = "";
-        List<FeedItem> _currentList = null;
-        ConcurrentQueue<string> _downloadimglist = new ConcurrentQueue<string>();
-        private Regex _imghrefregex = new Regex("src\\s*=\\s*[\'\"]\\s*(?<href>.*?)\\s*[\'\"]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-        private FormWindowState _lastFormState = FormWindowState.Normal;
-        private JSONParameters jp = new JSONParameters { UseExtensions = false, UseEscapedUnicode = false, UseUTCDateTime = false };
-        private string _localhostimageurl = "http://localhost:{port}/api/image?";
-        private ImageCache _imageCache;
-        private static ILog _log = LogManager.GetLogger(typeof(frmMain));
-        private System.Timers.Timer _minuteTimer;
-        private bool _newItemsExist = false;
-        private bool _DoDownloadImages = false;
-        private bool _run = true;
-        private int _visibleItems = 10;
-        Color _ThemeBackground = Color.White;
-        Color _ThemeNormal = Color.Black;
-        Color _ThemeHighLight = Color.Black;
-        CheckBox _menuCheckBox = new CheckBox();
-
-
         private void Form1_Load(object sender, EventArgs e)
         {
             Application.ThreadException += Application_ThreadException;
@@ -78,27 +95,32 @@ namespace RealNews
             notifyIcon1.Icon = Properties.Resources.tray;
             notifyIcon1.Visible = true;
 
-            Directory.CreateDirectory("feeds\\temp");
-            Directory.CreateDirectory("feeds\\lists");
-            Directory.CreateDirectory("feeds\\icons");
-            Directory.CreateDirectory("configs");
+            Directory.CreateDirectory(Path.Combine(_appDirectory, "feeds\\temp"));
+            Directory.CreateDirectory(Path.Combine(_appDirectory, "feeds\\lists"));
+            Directory.CreateDirectory(Path.Combine(_appDirectory, "feeds\\icons"));
+            Directory.CreateDirectory(Path.Combine(_appDirectory, "configs"));
 
             // save light dark css
-            if (File.Exists("configs\\light.css") == false)
-                File.WriteAllText("configs\\light.css", Properties.Resources.light);
-            if (File.Exists("configs\\dark.css") == false)
-                File.WriteAllText("configs\\dark.css", Properties.Resources.dark);
-
-            if (!File.Exists("configs\\search.plugin"))
-                File.WriteAllText("configs\\search.plugin", "public static string Process(string title)\r\n{\r\n\treturn title;\r\n}");
+            if (!File.Exists(Path.Combine(_appDirectory, "configs\\light.css")))
+            {
+                File.WriteAllText(Path.Combine(_appDirectory, "configs\\light.css"), Properties.Resources.light);
+            }
+            if (!File.Exists(Path.Combine(_appDirectory, "configs\\dark.css")))
+            {
+                File.WriteAllText(Path.Combine(_appDirectory, "configs\\dark.css"), Properties.Resources.dark);
+            }
+            if (!File.Exists(Path.Combine(_appDirectory, "configs\\search.plugin")))
+            {
+                File.WriteAllText(Path.Combine(_appDirectory, "configs\\search.plugin"), "public static string Process(string title)\r\n{\r\n\treturn title;\r\n}");
+            }
 
             JSON.Parameters.UseUTCDateTime = false;
-            if (File.Exists("configs\\settings.config"))
-                JSON.FillObject(new Settings(), File.ReadAllText("configs\\settings.config"));
-            if (Settings.Maximized)
-                this.WindowState = FormWindowState.Maximized;
-            else
-                this.WindowState = FormWindowState.Normal;
+            if (File.Exists(Path.Combine(_appDirectory, "configs\\settings.config")))
+            {
+                JSON.FillObject(new Settings(), File.ReadAllText(Path.Combine(_appDirectory, "configs\\settings.config")));
+            }
+
+            this.WindowState = Settings.Maximized ? FormWindowState.Maximized : FormWindowState.Normal;
 
             SetTheme();
 
@@ -109,7 +131,7 @@ namespace RealNews
             rssImages.Images.Add(Properties.Resources.Search);
 
             LoadFeeds();
-            Task.Factory.StartNew(downloadfeedicons);
+            Task.Factory.StartNew(Downloadfeedicons);
 
             splitContainer1.SplitterDistance = Settings.treeviewwidth;
             splitContainer2.SplitterDistance = Settings.feeditemlistwidth;
@@ -128,19 +150,21 @@ namespace RealNews
             Task.Factory.StartNew(DownloadThread);
 
             _minuteTimer = new System.Timers.Timer(1000);
-            _minuteTimer.Elapsed += _minuteTimer_Elapsed;
+            _minuteTimer.Elapsed += MinuteTimer_Elapsed;
             _minuteTimer.AutoReset = true;
             _minuteTimer.Enabled = true;
 
             if (Settings.MGFeatures)
             {
                 _menuCheckBox.Text = "System Proxy";
-                _menuCheckBox.ForeColor = Color.White;// menuStrip1.Items[0].ForeColor;
+                _menuCheckBox.ForeColor = Color.White; // menuStrip1.Items[0].ForeColor;
                 _menuCheckBox.BackColor = Color.Transparent;
                 _menuCheckBox.CheckStateChanged += Cb_CheckStateChanged;
                 _menuCheckBox.Checked = Settings.UseSytemProxy;
-                ToolStripControlHost host = new ToolStripControlHost(_menuCheckBox);
-                host.ForeColor = _menuCheckBox.ForeColor;
+                ToolStripControlHost host = new ToolStripControlHost(_menuCheckBox)
+                {
+                    ForeColor = _menuCheckBox.ForeColor
+                };
                 menuStrip1.Items.Add(host);
             }
         }
@@ -153,18 +177,18 @@ namespace RealNews
         private void Application_ThreadException(object sender, ThreadExceptionEventArgs e)
         {
             _log.Error(e.Exception);
-            Log("" + e.Exception.Message);
+            Log($"{e.Exception.Message} ({e.Exception.StackTrace})");
         }
 
         private void DownloadThread()
         {
             while (_run)
             {
-                if (_DoDownloadImages && _downloadimglist.Count > 0)
+                if (_DoDownloadImages && _downloadImgList.Count > 0)
                 {
                     // download image thread
                     int c = 0;
-                    int tot = _downloadimglist.Count;
+                    int tot = _downloadImgList.Count;
                     Invoke(() =>
                     {
                         toolProgressBar.Value = 0;
@@ -174,21 +198,22 @@ namespace RealNews
 
                     while (_DoDownloadImages && _run)
                     {
-                        for (int i = 0; i < 200 && _downloadimglist.Count > 0; i++)
+                        for (int i = 0; i < 200 && _downloadImgList.Count > 0; i++)
                         {
                             Task.Factory.StartNew(() =>
                             {
-                                _downloadimglist.TryDequeue(out string url);
+                                _downloadImgList.TryDequeue(out string url);
                                 c++;
-                                var ret = downloadImageFile(url);
+                                string ret = DownloadImageFile(url);
 
                                 if (ret.myContains("timed out")) // retry if timed out
                                 {
-                                    _downloadimglist.Enqueue(url);
+                                    _downloadImgList.Enqueue(url);
                                 }
+
                                 Invoke(() =>
                                 {
-                                    toolCount.Text = $"{_downloadimglist.Count} images left";
+                                    toolCount.Text = $"{_downloadImgList.Count} images left";
                                     toolProgressBar.Maximum = tot;
                                     toolProgressBar.Value = c;
                                 });
@@ -215,12 +240,14 @@ namespace RealNews
             }
         }
 
-        private string downloadImageFile(string url)
+        private string DownloadImageFile(string url)
         {
-            if (url == "" || url == null)
+            if (string.IsNullOrEmpty(url))
+            {
                 return "";
+            }
 
-            var ret = DownloadImage(url);
+            string ret = DownloadImage(url);
             Log(ret);
             return ret;
         }
@@ -232,16 +259,25 @@ namespace RealNews
             //url = url.Replace("&amp;", "&");
             url = url.Replace("amp;", "");
             if (_imageCache.Contains(url))
+            {
                 return "Image already downloaded";
+            }
 
             try
             {
                 long len;
                 HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
                 if (Settings.UseSytemProxy) // else define a proxy
+                {
                     req.Proxy = WebRequest.DefaultWebProxy;
-                else if (Settings.CustomProxy != "")
-                    req.Proxy = new WebProxy(Settings.CustomProxy);
+                }
+                else
+                {
+                    if (Settings.CustomProxy != "")
+                    {
+                        req.Proxy = new WebProxy(Settings.CustomProxy);
+                    }
+                }
 
                 req.Timeout = 4000;
                 req.Method = "HEAD";
@@ -253,12 +289,16 @@ namespace RealNews
 
                 if (len < Settings.DownloadImagesUnderKB * 1024)
                 {
-                    mWebClient wc = new mWebClient();
-                    wc.Timeout = 10000;
+                    mWebClient wc = new mWebClient
+                    {
+                        Timeout = 10000
+                    };
                     wc.DownloadFileAsync(new Uri(url), _imageCache.GetFilename(url));
                 }
                 else
-                    err = $"Image over size limit {Settings.DownloadImagesUnderKB}KB : {(len / 1024).ToString("#,#")}KB.";
+                {
+                    err = $"Image over size limit {Settings.DownloadImagesUnderKB}KB : {len / 1024:#,#}KB.";
+                }
             }
             catch (Exception ex)
             {
@@ -267,19 +307,17 @@ namespace RealNews
             return err;
         }
 
-        private object _minlock = new object();
-        private int _minCount = 0;
-        private void _minuteTimer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
+        private void MinuteTimer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
             _minCount++;
             // tray icon yellow
-            if (_newItemsExist)
-                notifyIcon1.Icon = Properties.Resources.trayhighlight;
-            else
-                notifyIcon1.Icon = Properties.Resources.tray;
+            notifyIcon1.Icon = _newItemsExist ? Properties.Resources.trayhighlight : Properties.Resources.tray;
 
             if (_minCount < 60)
+            {
                 return;
+            }
+
             _minCount = 0;
             lock (_minlock)
             {
@@ -309,11 +347,12 @@ namespace RealNews
 
                 _DoDownloadImages = false;
                 if (timeBetween >= start && timeBetween < end)
+                {
                     _DoDownloadImages = true;
+                }
             }
         }
 
-        private string _currhtml = "<html><link rel='stylesheet' href='http://localhost:" + Settings.webport + "/style.css'></html>";
         private string ShowFeedItemHtml()
         {
             return _currhtml;
@@ -322,14 +361,16 @@ namespace RealNews
         private void LoadFeeds()
         {
             splitContainer1.Visible = false;
-            if (File.Exists("feeds\\downloadimg.list"))
+
+            if (File.Exists(Path.Combine(_appDirectory, "feeds\\downloadImg.list")))
             {
-                var l = JSON.ToObject<List<string>>(File.ReadAllText("feeds\\downloadimg.list"));
-                _downloadimglist = new ConcurrentQueue<string>(l);
+                var l = JSON.ToObject<List<string>>(File.ReadAllText(Path.Combine(_appDirectory, "feeds\\downloadImg.list")));
+                _downloadImgList = new ConcurrentQueue<string>(l);
             }
-            if (File.Exists("feeds\\feeds.list"))
+
+            if (File.Exists(Path.Combine(_appDirectory, "feeds\\feeds.list")))
             {
-                _feeds = JSON.ToObject<List<Feed>>(File.ReadAllText("feeds\\feeds.list")).OrderBy(x => x.Title).ToList();
+                _feeds = JSON.ToObject<List<Feed>>(File.ReadAllText(Path.Combine(_appDirectory, "feeds\\feeds.list"))).OrderBy(x => x.Title).ToList();
                 treeView1.BeginUpdate();
 
                 treeView1.Nodes.Clear();
@@ -363,7 +404,7 @@ namespace RealNews
 
         private void AddTreeViewMain()
         {
-            var tn = treeView1.Nodes.Add("Unread");
+            TreeNode tn = treeView1.Nodes.Add("Unread");
             tn.ForeColor = _ThemeNormal;
             tn.Name = "Unread";
             tn.ImageIndex = 2;
@@ -383,13 +424,20 @@ namespace RealNews
         private TreeNode AddFeedToTree(Feed f)
         {
             TreeNode tn;
-            var fn = "feeds\\icons\\" + GetFeedFilenameOnly(f) + ".ico";
+            string fn = string.Empty;
+            int imgidx = 1;
+
+            if (File.Exists(Path.Combine(_appDirectory, "feeds\\downloadImg.list")))
+            {
+                fn = Path.Combine(_appDirectory, "feeds\\icons\\") + GetFeedFilenameOnly(f) + ".ico";
+            }
+
             if (File.Exists(GetFeedFilename(f)))
             {
                 var list = JSON.ToObject<List<FeedItem>>(File.ReadAllText(GetFeedFilename(f)));
                 _feeditems.TryAdd(f.Title, list);
             }
-            int imgidx = 1;
+
             if (File.Exists(fn))
             {
                 try
@@ -405,7 +453,9 @@ namespace RealNews
 
             tn.ForeColor = _ThemeNormal;
             if (f.LastError != "")
+            {
                 tn.ForeColor = Color.Red;
+            }
 
             if (f.UnreadCount > 0)
             {
@@ -414,25 +464,33 @@ namespace RealNews
                 tn.ForeColor = _ThemeHighLight;
             }
             else
+            {
                 tn.Text = f.Title;
+            }
             return tn;
         }
 
-        private void downloadfeedicons()
+        private void Downloadfeedicons()
         {
             mWebClient wc = new mWebClient();
+            string fn = string.Empty;
             bool update = false;
-            foreach (var f in _feeds)
-            {
-                var fn = "feeds\\icons\\" + GetFeedFilenameOnly(f) + ".ico";
-                if (File.Exists(fn) || f.feediconfailed)
-                    continue;
 
-                var u = new Uri(f.URL);
-                var ss = u.Host.Split('.');
+            foreach (Feed f in _feeds)
+            {
+                fn = Path.Combine(_appDirectory, "feeds\\icons\\") + GetFeedFilenameOnly(f) + ".ico";
+                if (File.Exists(fn) || f.feediconfailed)
+                {
+                    continue;
+                }
+
+                Uri u = new Uri(f.URL);
+                string[] ss = u.Host.Split('.');
                 if (ss[0] != "www" && ss.Length > 2)
+                {
                     ss[0] = "www";
-                var s = u.Scheme + "://" + string.Join(".", ss) + "/favicon.ico";
+                }
+                string s = u.Scheme + "://" + string.Join(".", ss) + "/favicon.ico";
 
                 try
                 {
@@ -442,17 +500,21 @@ namespace RealNews
                 catch
                 {
                     if (File.Exists(fn))
+                    {
                         File.Delete(fn);
+                    }
                     f.feediconfailed = true;
                 }
             }
 
             if (update)
+            {
                 Invoke(() =>
                 {
                     LoadFeeds();
                     Log("Feed icons downloaded.");
                 });
+            }
         }
 
         private void SkinForm()
@@ -472,7 +534,7 @@ namespace RealNews
         {
             if (Settings.DarkMode)
             {
-                File.Copy("configs/dark.css", "configs/style.css", true);
+                File.Copy(Path.Combine(_appDirectory, "configs/dark.css"), Path.Combine(_appDirectory, "configs/style.css"), true);
                 _ThemeBackground = Color.FromArgb(32, 32, 32);
                 _ThemeNormal = Color.Silver;// DimGray;
                 _ThemeHighLight = Color.White;
@@ -480,7 +542,7 @@ namespace RealNews
             }
             else
             {
-                File.Copy("configs/light.css", "configs/style.css", true);
+                File.Copy(Path.Combine(_appDirectory, "configs/light.css"), Path.Combine(_appDirectory, "configs/style.css"), true);
                 _ThemeBackground = Color.White;
                 _ThemeNormal = Color.Black;
                 _ThemeHighLight = Color.Black;
@@ -528,9 +590,11 @@ namespace RealNews
                         if (r == null)
                         {
                             _feeds.Add(feed);
-                            var tn = new TreeNode();
-                            tn.Tag = feed;
-                            tn.Text = feed.Title;
+                            var tn = new TreeNode
+                            {
+                                Tag = feed,
+                                Text = feed.Title
+                            };
                             treeView1.Nodes.Add(tn);
                         }
                     }
@@ -541,7 +605,7 @@ namespace RealNews
 
         private void UpdateFeed(Feed feed, Action<string> log)
         {
-            Regex imgTypesRegex = new Regex("\\.(jpg|jpeg|png|gif|bmp)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            Regex imgTypesRegex = new Regex("\\.(jpg|jpeg|png|gif|bmp|webp)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
             Regex imgTagWithoutHttpRegex = new Regex("<img.*src=\"\\/?(?!((http(s)?))).*\".*\\/>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
             var feedxml = "";
             if (feed != null && feed.URL != "")
@@ -554,7 +618,7 @@ namespace RealNews
                     Application.DoEvents();
                     mWebClient wc = new mWebClient();
                     feedxml = wc.DownloadString(feed.URL);
-                    Log($"feed {feed.Title} xml size {feedxml.Length.ToString("#,#")}");
+                    Log($"feed {feed.Title} xml size {feedxml.Length:#,#}");
                     //File.WriteAllText(GetFeedXmlFilename(feed), feedxml);
                     feed.LastUpdate = DateTime.Now;
                 }
@@ -573,7 +637,9 @@ namespace RealNews
             {
                 if (item.PublishingDate != null &&
                     DateTime.Now.Subtract(item.PublishingDate.Value).TotalDays > Settings.SkipFeedItemsDaysOlderThan)
+                {
                     continue;
+                }
 
                 var i = new FeedItem
                 {
@@ -630,23 +696,36 @@ namespace RealNews
                     foreach (var j in item.SpecificItem.ExtraData)
                     {
                         if (j.Key == "description" || j.Key == "title")
+                        {
                             continue;
+                        }
                         sb.Append("<tr><td>");
                         sb.Append(j.Key);
                         sb.Append("</td><td>");
 
                         if (j.Value.StartsWith("magnet") || j.Value.StartsWith("http"))
-                            sb.Append("<a href='" + j.Value + "' rel='noreferrer'>" + j.Value + "</a>");
-
-                        else if (j.Key.ToLower().Contains("length") || j.Key.ToLower() == "size")
                         {
-                            if (long.TryParse(j.Value, out long val))
-                                sb.Append(val.ToString("#,#"));
-                            else
-                                sb.Append(j.Value);
+                            sb.Append("<a href='" + j.Value + "' rel='noreferrer'>" + j.Value + "</a>");
                         }
                         else
-                            sb.Append(j.Value);
+                        {
+                            if (j.Key.ToLower().Contains("length") || j.Key.ToLower() == "size")
+                            {
+                                if (long.TryParse(j.Value, out long val))
+                                {
+                                    sb.Append(val.ToString("#,#"));
+                                }
+                                else
+                                {
+                                    sb.Append(j.Value);
+                                }
+                            }
+                            else
+                            {
+                                sb.Append(j.Value);
+                            }
+                        }
+
                         sb.Append("</td></tr>");
                     }
                     sb.AppendLine("</table>");
@@ -681,7 +760,9 @@ namespace RealNews
             // check and add to existing list
             List<FeedItem> old = null;
             if (_feeditems.ContainsKey(feed.Title))
+            {
                 _feeditems.TryRemove(feed.Title, out old);
+            }
 
             if (old != null)
             {
@@ -692,7 +773,9 @@ namespace RealNews
             }
 
             if (list.Count(x => x.isRead == false) > 0)
+            {
                 _newItemsExist = true;
+            }
 
             log("Saving feed : " + feed.Title);
             string fn = GetFeedFilename(feed);
@@ -754,7 +837,9 @@ namespace RealNews
         private void ShowItem(FeedItem item, bool isread)
         {
             if (isread)
+            {
                 _newItemsExist = false;
+            }
 
             // show item
             //if (item == null)
@@ -762,7 +847,10 @@ namespace RealNews
             //    return;
             //}
             if (item == null || item.Id == "")
+            {
+                Log($"Debug: item is null or its Id is empty");
                 return;
+            }
 
             Log("");
 
@@ -772,15 +860,21 @@ namespace RealNews
             StringBuilder sb = new StringBuilder();
             sb.Append("<html");
             if (item.RTL)
+            {
                 sb.Append(" dir='rtl'>"); // get if rtl
+            }
             else
+            {
                 sb.AppendLine(">");
-            sb.Append("<head><meta charset='UTF-8'><meta http-equiv='cache-control' content='no-cache'></head>");
+            }
+            sb.Append("<head><meta charset='UTF-8'><meta http-equiv='cache-control' content='no-cache' /></head>");
             sb.Append("<link rel='stylesheet' href='http://localhost:" + Settings.webport + "/style.css'>");
             sb.Append("<div class='title'>");
             sb.Append("<h2><a href='" + item.Link + "'>" + item.Title + "</a></h2>");
             if (item.isStarred)
+            {
                 sb.Append("<img src='star.png' />");
+            }
             sb.Append("<label>");
             sb.Append("" + item.Author);
             sb.Append("</label>");
@@ -817,10 +911,7 @@ namespace RealNews
 
             var ur = treeView1.Nodes.Find("Starred", true)[0];
             long c = _feeditems.Sum(f => f.Value.Count(x => x.isStarred));
-            if (c > 0)
-                ur.Text = $"Starred ({c})";
-            else
-                ur.Text = "Starred";
+            ur.Text = c > 0 ? $"Starred ({c})" : "Starred";
 
             treeView1.EndUpdate();
             treeView1.ResumeLayout();
@@ -852,7 +943,9 @@ namespace RealNews
                     var n = treeView1.Nodes.Find(feed.Title, true)[0];
                     n.ForeColor = _ThemeNormal;
                     if (feed.LastError != "")
+                    {
                         n.ForeColor = Color.Red;
+                    }
 
                     if (feed.UnreadCount > 0)
                     {
@@ -918,7 +1011,9 @@ namespace RealNews
         {
             // handle folders when moving next
             if (_currentFeed == null)
+            {
                 _currentFeed = _feeds[0];
+            }
             bool found = false;
             // move next
             if (_currentFeed.UnreadCount == 0)
@@ -941,14 +1036,18 @@ namespace RealNews
                                           .OrderBy(x => x.FullTitle)
                                           .ToList();
                     if (f.Count() > 0)
+                    {
                         _currentFeed = f[0];
+                    }
                 }
 
                 ShowFeedList(_currentFeed);
                 // focus feed in treeview
                 var n = treeView1.Nodes.Find(_currentFeed.Title, true);
                 if (n.Length > 0)
+                {
                     treeView1.SelectedNode = n[0];
+                }
             }
             ShowNextItem();
         }
@@ -977,9 +1076,9 @@ namespace RealNews
         {
             lock (_lock)
             {
-                File.WriteAllText("configs\\settings.config", JSON.ToNiceJSON(new Settings(), jp));
-                File.WriteAllText("feeds\\feeds.list", JSON.ToNiceJSON(_feeds, jp));
-                File.WriteAllText("feeds\\downloadimg.list", JSON.ToNiceJSON(_downloadimglist, jp));
+                File.WriteAllText(Path.Combine(_appDirectory,"configs\\settings.config"), JSON.ToNiceJSON(new Settings(), jp));
+                File.WriteAllText(Path.Combine(_appDirectory, "feeds\\feeds.list"), JSON.ToNiceJSON(_feeds, jp));
+                File.WriteAllText(Path.Combine(_appDirectory, "feeds\\downloadImg.list"), JSON.ToNiceJSON(_downloadImgList, jp));
                 foreach (var i in _feeditems)
                 {
                     File.WriteAllText(GetFeedFilename(i.Key), JSON.ToNiceJSON(i.Value, jp));
@@ -991,10 +1090,7 @@ namespace RealNews
         private void Shutdown()
         {
             _run = false;
-            if (this.WindowState == FormWindowState.Normal)
-                Settings.Maximized = false;
-            else
-                Settings.Maximized = true;
+            Settings.Maximized = this.WindowState != FormWindowState.Normal;
             SaveFeeds();
         }
 
@@ -1089,30 +1185,34 @@ namespace RealNews
         }
         private string GetFeedFilename(Feed f)
         {
-            return "feeds\\lists\\" + GetFeedFilenameOnly(f) + ".list";
+            return Path.Combine(_appDirectory, "feeds\\lists\\") + GetFeedFilenameOnly(f) + ".list";
         }
         private string GetFeedFilename(string title)
         {
-            return "feeds\\lists\\" + title.Replace(':', ' ').Replace('/', ' ').Replace('\\', ' ') + ".list";
+            return Path.Combine(_appDirectory, "feeds\\lists\\") + title.Replace(':', ' ').Replace('/', ' ').Replace('\\', ' ') + ".list";
         }
         private string GetFeedXmlFilename(Feed f)
         {
-            return "feeds\\temp\\" + GetFeedFilenameOnly(f) + ".xml";
+            return Path.Combine(_appDirectory, "feeds\\temp\\") + GetFeedFilenameOnly(f) + ".xml";
         }
 
         private void Log(string msg)
         {
             if (msg != "" && msg != " ")
+            {
                 _log.Info(msg);
+            }
             Invoke(() => { toolMessage.Text = msg; });
         }
 
         private void ToggleStarred()
         {
             if (myListBox1.SelectedItem != null)
+            {
                 return;
+            }
             // toggle star
-            var f = myListBox1.SelectedItem as FeedItem;
+            FeedItem f = myListBox1.SelectedItem as FeedItem;
             if (f != null && f.Id != "")
             {
                 f.isStarred = !f.isStarred;
@@ -1122,7 +1222,7 @@ namespace RealNews
         }
 
         #region ----------------- UI handlers ---------------------
-        private void webBrowser1_Navigating(object sender, WebBrowserNavigatingEventArgs e)
+        private void WebBrowser1_Navigating(object sender, WebBrowserNavigatingEventArgs e)
         {
             if (e.Url.ToString().StartsWith("http://localhost:" + Settings.webport) == false)
             {
@@ -1134,7 +1234,9 @@ namespace RealNews
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
             if (_exit == true)
+            {
                 Shutdown();
+            }
             else
             {
                 if (Settings.OnCloseMinimize)
@@ -1146,21 +1248,25 @@ namespace RealNews
                     this.Hide();
                 }
                 else
+                {
                     Shutdown();
+                }
             }
         }
 
-        private void treeView1_AfterSelect(object sender, TreeViewEventArgs e)
+        private void TreeView1_AfterSelect(object sender, TreeViewEventArgs e)
         {
             // after feed select -> show feed item list 
-            var feed = e.Node.Tag as Feed;
+            Feed feed = e.Node.Tag as Feed;
             if (feed != null)
             {
                 _currentFeed = feed;
                 _feedTitle = feed.Title;
                 ShowFeedList(feed);
                 if (_feeditems.TryGetValue(feed.Title, out List<FeedItem> fl))
+                {
                     Log(feed.Title + " item count = " + fl.Count);
+                }
             }
             else
             {
@@ -1174,51 +1280,67 @@ namespace RealNews
             List<FeedItem> list = new List<FeedItem>();
             _feedTitle = title;
 
-            if (title == "Unread")
+            switch (title)
             {
-                foreach (var f in _feeditems)
-                    list.AddRange(f.Value.FindAll(x => x.isRead == false));
+                case "Unread":
+                    {
+                        foreach (var f in _feeditems)
+                        {
+                            list.AddRange(f.Value.FindAll(x => x.isRead == false));
+                        }
+                        list = list.OrderByDescending(x => x.date).ToList();
 
-                list = list.OrderByDescending(x => x.date).ToList();
+                        ShowFeedList(list);
+                        break;
+                    }
 
-                ShowFeedList(list);
-            }
-            else if (title == "Starred")
-            {
-                foreach (var f in _feeditems)
-                    list.AddRange(f.Value.FindAll(x => x.isStarred == true));
+                case "Starred":
+                    {
+                        foreach (var f in _feeditems)
+                        {
+                            list.AddRange(f.Value.FindAll(x => x.isStarred == true));
+                        }
+                        list = list.OrderByDescending(x => x.date).ToList();
 
-                list = list.OrderByDescending(x => x.date).ToList();
+                        ShowFeedList(list);
+                        break;
+                    }
 
-                ShowFeedList(list);
-            }
-            else if (title == "Search")
-            {
-                ShowSearchResults();
-            }
-            else
-            {
-                // category selected 
-                var f = _feeds.FindAll(x => x.Folder == title).ToList();
-                foreach (var ff in f)
-                    list.AddRange(_feeditems[ff.Title]);
+                case "Search":
+                    {
+                        ShowSearchResults();
+                        break;
+                    }
+                default:
+                    {
+                        // category selected 
+                        var f = _feeds.FindAll(x => x.Folder == title).ToList();
+                        foreach (var ff in f)
+                        {
+                            list.AddRange(_feeditems[ff.Title]);
+                        }
+                        list = list.OrderByDescending(x => x.date).ToList();
 
-                list = list.OrderByDescending(x => x.date).ToList();
-
-                ShowFeedList(list);
+                        ShowFeedList(list);
+                        break;
+                    }
             }
         }
 
-        private void splitContainer1_SplitterMoved(object sender, SplitterEventArgs e)
+        private void SplitContainer1_SplitterMoved(object sender, SplitterEventArgs e)
         {
             if (loaded)
+            {
                 Settings.treeviewwidth = e.SplitX;
+            }
         }
 
-        private void splitContainer2_SplitterMoved(object sender, SplitterEventArgs e)
+        private void SplitContainer2_SplitterMoved(object sender, SplitterEventArgs e)
         {
             if (loaded)
+            {
                 Settings.feeditemlistwidth = e.SplitX;
+            }
             // resize bug 
             myListBox1.DrawMode = DrawMode.OwnerDrawFixed;
             myListBox1.DrawMode = DrawMode.OwnerDrawVariable;
@@ -1226,36 +1348,40 @@ namespace RealNews
 
         private bool _exit = false;
 
-        private void exitToolStripMenuItem_Click(object sender, EventArgs e)
+        private void ExitToolStripMenuItem_Click(object sender, EventArgs e)
         {
             _exit = true;
             this.Close();
         }
 
-        private void nextToolStripMenuItem_Click(object sender, EventArgs e)
+        private void NextToolStripMenuItem_Click(object sender, EventArgs e)
         {
             MoveNextUnread();
         }
 
-        private void updateAllToolStripMenuItem_Click(object sender, EventArgs e)
+        private void UpdateAllToolStripMenuItem_Click(object sender, EventArgs e)
         {
             UpdateAll();
         }
 
-        private void markAsReadToolStripMenuItem_Click(object sender, EventArgs e)
+        private void MarkAsReadToolStripMenuItem_Click(object sender, EventArgs e)
         {
             var n = treeView1.SelectedNode;
-            var f = n.Tag as Feed;
+            Feed f = n.Tag as Feed;
             if (f != null)
+            {
                 _currentList.ForEach(x => x.isRead = true);
+            }
             else
+            {
                 _feeds.FindAll(x => x.Folder == n.Name).ForEach(x => _feeditems[x.Title].ForEach(o => o.isRead = true));
+            }
 
             UpdateAllFeedCounts();
             ShowFeedList(_currentFeed);
         }
 
-        private void updateNowToolStripMenuItem_Click(object sender, EventArgs e)
+        private void UpdateNowToolStripMenuItem_Click(object sender, EventArgs e)
         {
             var n = treeView1.SelectedNode;
             var f = n.Tag as Feed;
@@ -1280,7 +1406,7 @@ namespace RealNews
             }
         }
 
-        private void treeView1_NodeMouseClick(object sender, TreeNodeMouseClickEventArgs e)
+        private void TreeView1_NodeMouseClick(object sender, TreeNodeMouseClickEventArgs e)
         {
             if (e.Button == MouseButtons.Right)
             {
@@ -1288,26 +1414,28 @@ namespace RealNews
             }
         }
 
-        private void listView1_Click(object sender, EventArgs e)
+        private void ListView1_Click(object sender, EventArgs e)
         {
             ShowItem(myListBox1.SelectedItem as FeedItem);
         }
 
-        private void listView1_KeyUp(object sender, KeyEventArgs e)
+        private void ListView1_KeyUp(object sender, KeyEventArgs e)
         {
             ShowItem(myListBox1.SelectedItem as FeedItem);
         }
 
-        private void starToolStripMenuItem_Click(object sender, EventArgs e)
+        private void StarToolStripMenuItem_Click(object sender, EventArgs e)
         {
             ToggleStarred();
         }
 
-        private void addNewFeedToolStripMenuItem_Click(object sender, EventArgs e)
+        private void AddNewFeedToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // add new feed
-            frmFeed form = new frmFeed();
-            form.feed = new Feed();
+            frmFeed form = new frmFeed
+            {
+                feed = new Feed()
+            };
             if (form.ShowDialog() == DialogResult.OK)
             {
                 // check if already exists
@@ -1325,22 +1453,26 @@ namespace RealNews
             }
         }
 
-        private void importOPMLToolStripMenuItem_Click(object sender, EventArgs e)
+        private void ImportOPMLToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // import opml file
-            OpenFileDialog openFileDialog1 = new OpenFileDialog();
-            openFileDialog1.Filter = "OPML files (*.opml)|*.opml|All files (*.*)|*.*";
+            OpenFileDialog openFileDialog1 = new OpenFileDialog
+            {
+                Filter = "OPML files (*.opml)|*.opml|All files (*.*)|*.*"
+            };
             if (openFileDialog1.ShowDialog() == DialogResult.OK)
             {
                 ReadOPML(openFileDialog1.FileName);
             }
         }
 
-        private void editFeedToolStripMenuItem_Click(object sender, EventArgs e)
+        private void EditFeedToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // edit feed
-            frmFeed form = new frmFeed();
-            form.feed = treeView1.SelectedNode.Tag as Feed;
+            frmFeed form = new frmFeed
+            {
+                feed = treeView1.SelectedNode.Tag as Feed
+            };
             if (form.feed == null)
             {
                 Log("Please select a feed first");
@@ -1381,7 +1513,9 @@ namespace RealNews
                 }
                 bool reload = false;
                 if (form.feed.Folder != f.Folder)
+                {
                     reload = true;
+                }
                 form.feed.URL = f.URL;
                 form.feed.RTL = f.RTL;
                 form.feed.Folder = f.Folder;
@@ -1390,45 +1524,51 @@ namespace RealNews
                 form.feed.ExcludeInCleanup = f.ExcludeInCleanup;
                 SaveFeeds();
                 if (reload)
+                {
                     LoadFeeds();
+                }
             }
         }
 
-        private void toggleStarToolStripMenuItem_Click(object sender, EventArgs e)
+        private void ToggleStarToolStripMenuItem_Click(object sender, EventArgs e)
         {
             ToggleStarred();
         }
 
-        private void markUnreadToolStripMenuItem_Click(object sender, EventArgs e)
+        private void MarkUnreadToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // mark unread
 
             foreach (FeedItem fi in myListBox1.SelectedItems)
             {
                 if (fi != null && fi.Id != "")
-                    fi.isRead = false;// !f.isRead;
+                {
+                    fi.isRead = false; // !f.isRead;
+                }
             }
             UpdateFeedCount();
         }
 
-        private void downloadImagesToolStripMenuItem_Click(object sender, EventArgs e)
+        private void DownloadImagesToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // force download image for item now
-            var f = myListBox1.SelectedItem as FeedItem;
+            FeedItem f = myListBox1.SelectedItem as FeedItem;
             if (f != null)
             {
-                internalDownloadImage(f, true);
+                InternalDownloadImage(f, true);
             }
         }
 
-        private void internalDownloadImage(FeedItem f, bool show)
+        private void InternalDownloadImage(FeedItem f, bool show)
         {
             List<string> imgs = new List<string>();
             foreach (var img in GetImagesInHTMLString(f.Description))
             {
                 var s = _imghrefregex.Match(img).Groups["href"].Value;
                 if (_imageCache.Contains(s) == false)
+                {
                     imgs.Add(s);
+                }
             }
             Task.Factory.StartNew(() =>
             {
@@ -1436,7 +1576,8 @@ namespace RealNews
                 foreach (var i in imgs)
                 {
                     string key = i.Replace(_localhostimageurl, "");
-                    string url = "https://" + key;
+                    // string url = "https://" + key;
+                    string url = key;
                     err = DownloadImage(url);
                 }
                 Thread.Sleep(4000);
@@ -1452,7 +1593,7 @@ namespace RealNews
             });
         }
 
-        private void notifyIcon1_MouseClick(object sender, MouseEventArgs e)
+        private void NotifyIcon1_MouseClick(object sender, MouseEventArgs e)
         {
             if (e.Button == MouseButtons.Left)
             {
@@ -1462,7 +1603,7 @@ namespace RealNews
             }
         }
 
-        private void frmMain_Resize(object sender, EventArgs e)
+        private void FrmMain_Resize(object sender, EventArgs e)
         {
             notifyIcon1.Visible = true;
             if (FormWindowState.Minimized == this.WindowState)
@@ -1471,7 +1612,7 @@ namespace RealNews
             }
         }
 
-        private void cleanupToolStripMenuItem_Click(object sender, EventArgs e)
+        private void CleanupToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // global cleanup old items
             int c = 0;
@@ -1489,7 +1630,9 @@ namespace RealNews
                     feed.LastError = "";
                     n.ForeColor = _ThemeNormal;
                     if (n.NodeFont.Bold == true)
+                    {
                         n.ForeColor = _ThemeHighLight;
+                    }
                 }
             });
 
@@ -1497,7 +1640,9 @@ namespace RealNews
             {
                 var ff = _feeds.Find(x => x.Title == f.Key);
                 if (ff != null && ff.ExcludeInCleanup)
+                {
                     continue;
+                }
 
                 c += f.Value.Count(x =>
                     DateTime.Now.Subtract(x.date).TotalDays >= Settings.CleanupItemAfterDays
@@ -1519,7 +1664,9 @@ namespace RealNews
                 {
                     var ff = _feeds.Find(x => x.Title == f.Key);
                     if (ff != null && ff.ExcludeInCleanup)
+                    {
                         continue;
+                    }
 
                     var list = f.Value.FindAll(expr);
                     list.ForEach(x =>
@@ -1542,7 +1689,7 @@ namespace RealNews
             }
         }
 
-        private void txtSearch_KeyUp(object sender, KeyEventArgs e)
+        private void TxtSearch_KeyUp(object sender, KeyEventArgs e)
         {
             if (e.KeyCode == Keys.Enter)
             {
@@ -1554,17 +1701,21 @@ namespace RealNews
         private void ShowSearchResults()
         {
             List<FeedItem> list = new List<FeedItem>();
-            string s = placeHolderTextBox1.Text;//.ToLower();
+            string s = placeHolderTextBox1.Text; //.ToLower();
             if (s != "")
+            {
                 foreach (var f in _feeditems)
                 {
                     list.AddRange(f.Value.FindAll(x =>
                         x.Title.myContains(s) ||
                         x.Description.myContains(s)));
                 }
+            }
             treeView1.Nodes[2].Text = "Search Results";
             if (list.Count > 0)
+            {
                 treeView1.Nodes[2].Text = $"Search Results ({list.Count})";
+            }
             _currentFeed = null;
 
             list = list.OrderByDescending(x => x.date).ToList();
@@ -1573,18 +1724,18 @@ namespace RealNews
             Log($"{list.Count} items found.");
         }
 
-        private void txtSearch_Enter(object sender, EventArgs e)
+        private void TxtSearch_Enter(object sender, EventArgs e)
         {
             placeHolderTextBox1.SelectAll();
         }
 
-        private void exitToolStripMenuItem1_Click(object sender, EventArgs e)
+        private void ExitToolStripMenuItem1_Click(object sender, EventArgs e)
         {
             _exit = true;
             this.Close();
         }
 
-        private void restoreToolStripMenuItem_Click(object sender, EventArgs e)
+        private void RestoreToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // show form
             this.Show();
@@ -1596,13 +1747,13 @@ namespace RealNews
             this.Invoke((Delegate)a);
         }
 
-        private void settingsToolStripMenuItem_Click(object sender, EventArgs e)
+        private void SettingsToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // settings form here
             frmSettings f = new frmSettings();
             if (f.ShowDialog() == DialogResult.OK)
             {
-                File.WriteAllText("configs\\settings.config", JSON.ToNiceJSON(new Settings(), jp));
+                File.WriteAllText(Path.Combine(_appDirectory, "configs\\settings.config"), JSON.ToNiceJSON(new Settings(), jp));
                 SetTheme();
                 string cf = _feedTitle;
                 LoadFeeds();
@@ -1613,56 +1764,28 @@ namespace RealNews
                     // focus feed in treeview
                     var n = treeView1.Nodes.Find(cf, true);
                     if (n.Length > 0)
+                    {
                         treeView1.SelectedNode = n[0];
+                    }
                 }
                 // redo web browser content in theme
                 webBrowser1.Refresh(WebBrowserRefreshOption.Completely);
             }
         }
 
-        private void aboutToolStripMenuItem_Click(object sender, EventArgs e)
+        private void AboutToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // about box
             AboutBox1 a = new AboutBox1();
             a.ShowDialog();
         }
 
-        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
-        {
-            if (Settings.MGFeatures && keyData == Keys.Escape)
-            {
-                MoveNextUnread();
-                return true;
-            }
-            if (keyData == Keys.Space && placeHolderTextBox1.Focused == false)
-            {
-                MoveNextUnread();
-                return true;
-            }
-            else if (keyData == (Keys.D | Keys.Control))
-            {
-                deleteItems();
-                return true;
-            }
-            else if (keyData == (Keys.Down | Keys.Alt))
-            {
-                //MessageBox.Show("down");
-                MoveNext();
-                return true;
-            }
-            else if (keyData == (Keys.Up | Keys.Alt))
-            {
-                MovePrev();
-                return true;
-            }
-
-            return base.ProcessCmdKey(ref msg, keyData);
-        }
-
         private void MovePrev()
         {
             if (myListBox1.SelectedIndices.Count == 0)
+            {
                 return;
+            }
             int selectedIndex = myListBox1.SelectedIndices[0];
             if (selectedIndex > 0)
             {
@@ -1687,36 +1810,44 @@ namespace RealNews
             }
         }
 
-        private void logMessagesToolStripMenuItem_Click(object sender, EventArgs e)
+        private void LogMessagesToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // show log form
             frmLog f = new frmLog();
             f.Show();
         }
 
-        private void editToolStripMenuItem_Click(object sender, EventArgs e)
+        private void EditToolStripMenuItem_Click(object sender, EventArgs e)
         {
             if (myListBox1.SelectedItem == null)
+            {
                 return;
+            }
             // toggle star
             var f = myListBox1.SelectedItem as FeedItem;
             string title = f.Title;
 
+
             // preprocess title
-            if (File.Exists("configs\\search.plugin"))
+            if (File.Exists(Path.Combine(_appDirectory, "configs\\search.plugin")))
             {
                 try
                 {
-                    title = Compiler.CompileAndRun("configs\\search.plugin", new object[] { title });
+                    title = Compiler.CompileAndRun(Path.Combine(_appDirectory, "configs\\search.plugin"), new object[] { title });
                 }
-                catch (Exception ex) { Log("" + ex); }
+                catch (Exception ex)
+                { 
+                    Log("" + ex);
+                }
             }
 
             if (f != null)
+            {
                 Process.Start("www.google.com/search?q=" + title);
+            }
         }
 
-        private void button1_Click(object sender, EventArgs e)
+        private void Button1_Click(object sender, EventArgs e)
         {
             // clear search text
             placeHolderTextBox1.Text = "";
@@ -1725,12 +1856,16 @@ namespace RealNews
             button1.Visible = false;
         }
 
-        private void placeHolderTextBox1_KeyDown(object sender, KeyEventArgs e)
+        private void PlaceHolderTextBox1_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.KeyCode == Keys.Return)
+            { 
                 e.SuppressKeyPress = true;
+            }
             if (button1.Visible == false)
+            {
                 button1.Visible = true;
+            }
         }
 
         //private void fontToolStripMenuItem_Click(object sender, EventArgs e)
@@ -1743,11 +1878,13 @@ namespace RealNews
         //    }
         //}
 
-        private void cleanupToolStripMenuItem_Click_2(object sender, EventArgs e)
+        private void CleanupToolStripMenuItem_Click_2(object sender, EventArgs e)
         {
             // feed cleanup old items
             if (treeView1.SelectedNode == null || treeView1.SelectedNode.Tag == null)
+            {
                 return;
+            }
 
             var expr = new Predicate<FeedItem>(x =>
                     DateTime.Now.Subtract(x.date).TotalDays >= Settings.CleanupItemAfterDays
@@ -1762,7 +1899,6 @@ namespace RealNews
 
             // clear feed errors
             _feeds.ForEach(x => x.LastError = "");
-
 
             if (c == 0)
             {
@@ -1795,11 +1931,13 @@ namespace RealNews
         }
 
         private object _dflock = new object();
-        private void downloadImagesToolStripMenuItem1_Click(object sender, EventArgs e)
+        private void DownloadImagesToolStripMenuItem1_Click(object sender, EventArgs e)
         {
             // download images for feed now
             if (treeView1.SelectedNode == null || treeView1.SelectedNode.Tag == null)
+            {
                 return;
+            }
             lock (_dflock)
             {
                 var feed = treeView1.SelectedNode.Tag as Feed;
@@ -1812,7 +1950,7 @@ namespace RealNews
                     {
                         if (i.isRead == false)
                         {
-                            internalDownloadImage(i, false);
+                            InternalDownloadImage(i, false);
                         }
                         Application.DoEvents();
                     }
@@ -1822,13 +1960,15 @@ namespace RealNews
         #endregion
 
         private object _zlock = new object();
-        private void compressImageCacheToolStripMenuItem_Click(object sender, EventArgs e)
+        private void CompressImageCacheToolStripMenuItem_Click(object sender, EventArgs e)
         {
             lock (_zlock)
             {
                 var r = MessageBox.Show($"Do you want to zip compress the image cache?", "Compress Images", MessageBoxButtons.YesNo, MessageBoxIcon.Exclamation, MessageBoxDefaultButton.Button2);
                 if (r == DialogResult.No)
+                {
                     return;
+                }
                 // compress image cache
                 var dirs = Directory.GetDirectories("cache");
                 toolProgressBar.Value = 0;
@@ -1839,7 +1979,9 @@ namespace RealNews
                     toolProgressBar.Value++;
                     RaptorDB.Common.ZIP.Compress(dir + ".zip", dir, false, Log);
                     foreach (var f in Directory.GetFiles(dir, "*.jpg"))
+                    {
                         File.Delete(f);
+                    }
                     Application.DoEvents();
                 }
                 _imageCache.ClearLookup();
@@ -1848,33 +1990,41 @@ namespace RealNews
             }
         }
 
-        private void deleteItemToolStripMenuItem_Click(object sender, EventArgs e)
+        private void DeleteItemToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            deleteItems();
+            DeleteItems();
         }
 
-        private void deleteItems()
+        private void DeleteItems()
         {
             // FIX : handle search list delete
             // delete item
             int count = myListBox1.SelectedItems.Count;
-            if (count == 0)// == null)
+            if (count == 0) // == null)
+            {
                 return;
-            var feed = treeView1.SelectedNode.Tag as Feed;
+            }
+            Feed feed = treeView1.SelectedNode.Tag as Feed;
             if (feed == null)
+            {
                 return;
+            }
             if (count > 1)
             {
                 var r = MessageBox.Show($"Do you want to delete {count} items now?\r\n\r\nStarred Items will be ignored, and you must unstar first. ", "Delete", MessageBoxButtons.YesNo, MessageBoxIcon.Exclamation, MessageBoxDefaultButton.Button2);
                 if (r == DialogResult.No)
+                {
                     return;
+                }
             }
             var list = _feeditems[feed.Title];
             int last = myListBox1.SelectedIndices[count-1] - count;
             foreach (FeedItem f in myListBox1.SelectedItems)
             {
                 if (f.isStarred)
+                {
                     continue;
+                }
                 List<string> imgs = new List<string>();
                 foreach (var img in GetImagesInHTMLString(f.Description))
                 {
@@ -1894,14 +2044,16 @@ namespace RealNews
             myListBox1.EnsureVisible(_visibleItems);
         }
 
-        private void cleanupImageCacheToolStripMenuItem_Click(object sender, EventArgs e)
+        private void CleanupImageCacheToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // cleanup image cache
 
             // get list of images -> folder, img name
             Dictionary<string, bool> imgs = new Dictionary<string, bool>();
             if (Directory.Exists("Cache") == false)
+            {
                 return;
+            }
 
             foreach (var f in Directory.EnumerateFiles("Cache", "*.*", SearchOption.AllDirectories))
             {
@@ -1927,7 +2079,9 @@ namespace RealNews
             {
                 var s = i.fn.ToLowerInvariant();
                 if (imgs.ContainsKey(s))
+                {
                     imgs.Remove(s);
+                }
             }
             if (imgs.Count == 0)
             {
