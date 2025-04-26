@@ -78,7 +78,7 @@
             this.exitToolStripMenuItem1 = new System.Windows.Forms.ToolStripMenuItem();
             this.placeHolderTextBox1 = new PlaceHolderTextBox();
             this.myListBox1 = new RealNews.myListBox();
-            this.webBrowser1 = new System.Windows.Forms.WebBrowser();
+            this.webView2 = new Microsoft.Web.WebView2.WinForms.WebView2();
             ((System.ComponentModel.ISupportInitialize)(this.splitContainer1)).BeginInit();
             this.splitContainer1.Panel1.SuspendLayout();
             this.splitContainer1.Panel2.SuspendLayout();
@@ -273,7 +273,7 @@
             // 
             // splitContainer2.Panel2
             // 
-            this.splitContainer2.Panel2.Controls.Add(this.webBrowser1);
+            this.splitContainer2.Panel2.Controls.Add(this.webView2);
             this.splitContainer2.Size = new System.Drawing.Size(678, 587);
             this.splitContainer2.SplitterDistance = 225;
             this.splitContainer2.SplitterWidth = 3;
@@ -548,7 +548,7 @@
             this.exitToolStripMenuItem1.Name = "exitToolStripMenuItem1";
             this.exitToolStripMenuItem1.Size = new System.Drawing.Size(113, 22);
             this.exitToolStripMenuItem1.Text = "Exit";
-            this.exitToolStripMenuItem1.Click += new System.EventHandler(this.ExitToolStripMenuItem1_Click);
+            this.exitToolStripMenuItem1.Click += new System.EventHandler(this.ExitToolStripMenuItem_Click);
             // 
             // placeHolderTextBox1
             // 
@@ -587,15 +587,14 @@
             this.myListBox1.Click += new System.EventHandler(this.ListView1_Click);
             this.myListBox1.KeyUp += new System.Windows.Forms.KeyEventHandler(this.ListView1_KeyUp);
             // 
-            // webBrowser1
+            // webView
             // 
-            this.webBrowser1.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.webBrowser1.Location = new System.Drawing.Point(0, 0);
-            this.webBrowser1.MinimumSize = new System.Drawing.Size(23, 25);
-            this.webBrowser1.Name = "webBrowser1";
-            this.webBrowser1.Size = new System.Drawing.Size(450, 587);
-            this.webBrowser1.TabIndex = 0;
-            this.webBrowser1.Navigating += new System.Windows.Forms.WebBrowserNavigatingEventHandler(this.WebBrowser1_Navigating);
+            this.webView2.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.webView2.Location = new System.Drawing.Point(0, 0);
+            this.webView2.MinimumSize = new System.Drawing.Size(23, 25);
+            this.webView2.Name = "webView2";
+            this.webView2.Size = new System.Drawing.Size(450, 587);
+            this.webView2.TabIndex = 0;
             // 
             // frmMain
             // 
@@ -640,7 +639,7 @@
 
         private System.Windows.Forms.SplitContainer splitContainer1;
         private System.Windows.Forms.SplitContainer splitContainer2;
-        private System.Windows.Forms.WebBrowser webBrowser1;
+        private Microsoft.Web.WebView2.WinForms.WebView2 webView2;
         private System.Windows.Forms.MenuStrip menuStrip1;
         private System.Windows.Forms.ToolStripMenuItem fileToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem exitToolStripMenuItem;

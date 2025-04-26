@@ -1,5 +1,6 @@
 ﻿using CodeHollow.FeedReader;
 using fastJSON;
+using Microsoft.Web.WebView2.Core;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -52,10 +53,14 @@ namespace RealNews
         private int _minCount = 0;
         private string _currhtml = "<html><link rel='stylesheet' href='http://localhost:" + Settings.webport + "/style.css'></html>";
 
-        public FrmMain()
+        public FrmMain() => InitializeComponent();
+
+        protected override async void OnLoad(EventArgs e)
         {
-            InitializeComponent();
-            (this.webBrowser1.ActiveXInstance as SHDocVw.WebBrowser).NewWindow3 += FrmMain_NewWindow3;
+            base.OnLoad(e);
+            webView2.CoreWebView2InitializationCompleted += OnCoreWebView2InitializationCompleted;
+            var env = await CoreWebView2Environment.CreateAsync(null, null, null);
+            await webView2.EnsureCoreWebView2Async(env);
         }
 
         protected override void WndProc(ref Message m)
@@ -81,11 +86,9 @@ namespace RealNews
             base.WndProc(ref m);
         }
 
-        private void FrmMain_NewWindow3(ref object ppDisp, ref bool Cancel, uint dwFlags, string bstrUrlContext, string bstrUrl)
+        private void OnCoreWebView2InitializationCompleted(object sender, CoreWebView2InitializationCompletedEventArgs e)
         {
-            // for a tags with target = new window
-            Cancel = true;
-            Process.Start(bstrUrl);
+           
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -145,7 +148,6 @@ namespace RealNews
             SkinForm();
             _lastFormState = this.WindowState;
             Log(" ");
-            webBrowser1.Navigate("http://localhost:" + Settings.webport + "/api/show");
 
             Task.Factory.StartNew(DownloadThread);
 
@@ -892,10 +894,7 @@ namespace RealNews
             sb.AppendLine("</html>");
 
             _currhtml = sb.ToString();
-            webBrowser1.SuspendLayout();
-            webBrowser1.Refresh(WebBrowserRefreshOption.Completely);
-            webBrowser1.Document.Window.ScrollTo(0, 0);
-            webBrowser1.ResumeLayout();
+            webView2.NavigateToString(_currhtml);
 
             if (item.isRead != isread)
             {
@@ -1222,15 +1221,6 @@ namespace RealNews
         }
 
         #region ----------------- UI handlers ---------------------
-        private void WebBrowser1_Navigating(object sender, WebBrowserNavigatingEventArgs e)
-        {
-            if (e.Url.ToString().StartsWith("http://localhost:" + Settings.webport) == false)
-            {
-                e.Cancel = true;
-                Process.Start(e.Url.ToString());
-            }
-        }
-
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
             if (_exit == true)
@@ -1351,6 +1341,8 @@ namespace RealNews
         private void ExitToolStripMenuItem_Click(object sender, EventArgs e)
         {
             _exit = true;
+            // Unhooking from the timer
+            _minuteTimer.Elapsed -= MinuteTimer_Elapsed;
             this.Close();
         }
 
@@ -1729,12 +1721,6 @@ namespace RealNews
             placeHolderTextBox1.SelectAll();
         }
 
-        private void ExitToolStripMenuItem1_Click(object sender, EventArgs e)
-        {
-            _exit = true;
-            this.Close();
-        }
-
         private void RestoreToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // show form
@@ -1769,7 +1755,7 @@ namespace RealNews
                     }
                 }
                 // redo web browser content in theme
-                webBrowser1.Refresh(WebBrowserRefreshOption.Completely);
+                webView2.Reload();
             }
         }
 
