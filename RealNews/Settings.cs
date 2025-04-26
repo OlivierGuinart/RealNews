@@ -12,7 +12,7 @@ namespace RealNews
 
         public static bool Maximized = true;
 
-        public static bool UseSytemProxy = true;
+        public static bool UseSystemProxy = true;
 
         public static int GlobalUpdateEveryMin = 4*60;
 

@@ -19,7 +19,7 @@ namespace RealNews
             this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 
             // setup form
-            chkUseSystemProxy.Checked = Settings.UseSytemProxy;
+            chkUseSystemProxy.Checked = Settings.UseSystemProxy;
             numUpdate.Value = Settings.GlobalUpdateEveryMin;
             numWebPort.Value = Settings.webport;
             numDownloadSize.Value = Settings.DownloadImagesUnderKB;
@@ -35,8 +35,9 @@ namespace RealNews
 
             txtCustomProxy.Enabled = true;
             if (chkUseSystemProxy.Checked)
+            {
                 txtCustomProxy.Enabled = false;
-
+            }
             _isdirty = false;
         }
 
@@ -55,7 +56,7 @@ namespace RealNews
         {
             try
             {
-                Settings.UseSytemProxy = chkUseSystemProxy.Checked;
+                Settings.UseSystemProxy = chkUseSystemProxy.Checked;
                 Settings.GlobalUpdateEveryMin = (int)numUpdate.Value;
                 Settings.webport = (int)numWebPort.Value;
                 Settings.DownloadImagesUnderKB = (int)numDownloadSize.Value;
@@ -78,7 +79,9 @@ namespace RealNews
                     this.Close();
                 }
                 else
+                {
                     MessageBox.Show("Start Time must be less than End Time");
+                }
             }
             catch
             {
@@ -89,15 +92,21 @@ namespace RealNews
         private void linkLabel1_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
             if (chkDarkMode.Checked)
+            {
                 Process.Start("notepad.exe", "configs/dark.css");
+            }
             else
+            {
                 Process.Start("notepad.exe", "configs/light.css");
+            }
         }
 
         private void frmSettings_KeyUp(object sender, KeyEventArgs e)
         {
             if (_isdirty == false && e.KeyCode == Keys.Escape)
+            {
                 cancelclose();
+            }
         }
 
         private void chkUseSystemProxy_CheckedChanged(object sender, EventArgs e)
@@ -106,7 +115,9 @@ namespace RealNews
 
             txtCustomProxy.Enabled = true;
             if (chkUseSystemProxy.Checked)
+            {
                 txtCustomProxy.Enabled = false;
+            }
         }
 
         private void TxtCustomProxy_Enter(object sender, EventArgs e)

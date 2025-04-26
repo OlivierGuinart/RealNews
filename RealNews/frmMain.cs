@@ -162,7 +162,7 @@ namespace RealNews
                 _menuCheckBox.ForeColor = Color.White; // menuStrip1.Items[0].ForeColor;
                 _menuCheckBox.BackColor = Color.Transparent;
                 _menuCheckBox.CheckStateChanged += Cb_CheckStateChanged;
-                _menuCheckBox.Checked = Settings.UseSytemProxy;
+                _menuCheckBox.Checked = Settings.UseSystemProxy;
                 ToolStripControlHost host = new ToolStripControlHost(_menuCheckBox)
                 {
                     ForeColor = _menuCheckBox.ForeColor
@@ -173,7 +173,7 @@ namespace RealNews
 
         private void Cb_CheckStateChanged(object sender, EventArgs e)
         {
-            Settings.UseSytemProxy = (sender as CheckBox).Checked;
+            Settings.UseSystemProxy = (sender as CheckBox).Checked;
         }
 
         private void Application_ThreadException(object sender, ThreadExceptionEventArgs e)
@@ -269,7 +269,7 @@ namespace RealNews
             {
                 long len;
                 HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
-                if (Settings.UseSytemProxy) // else define a proxy
+                if (Settings.UseSystemProxy) // else define a proxy
                 {
                     req.Proxy = WebRequest.DefaultWebProxy;
                 }
@@ -1743,7 +1743,7 @@ namespace RealNews
                 SetTheme();
                 string cf = _feedTitle;
                 LoadFeeds();
-                _menuCheckBox.Checked = Settings.UseSytemProxy;
+                _menuCheckBox.Checked = Settings.UseSystemProxy;
                 if (cf != "")
                 {
                     ShowFeedFromTitle(cf);
