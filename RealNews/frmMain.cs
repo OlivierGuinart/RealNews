@@ -88,7 +88,7 @@ namespace RealNews
 
         private void OnCoreWebView2InitializationCompleted(object sender, CoreWebView2InitializationCompletedEventArgs e)
         {
-           
+            webView2.CoreWebView2.Navigate("http://localhost:" + Settings.webport + "/api/show");
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -148,7 +148,7 @@ namespace RealNews
             SkinForm();
             _lastFormState = this.WindowState;
             Log(" ");
-
+            
             Task.Factory.StartNew(DownloadThread);
 
             _minuteTimer = new System.Timers.Timer(1000);
@@ -900,7 +900,8 @@ namespace RealNews
             sb.AppendLine("</html>");
 
             _currhtml = sb.ToString();
-            webView2.NavigateToString(_currhtml);
+
+            webView2.CoreWebView2.Reload();
 
             if (item.isRead != isread)
             {
@@ -1227,6 +1228,16 @@ namespace RealNews
         }
 
         #region ----------------- UI handlers ---------------------
+        // OG : To revisit
+        private void WebBrowser1_Navigating(object sender, WebBrowserNavigatingEventArgs e)
+        {
+            if (e.Url.ToString().StartsWith("http://localhost:" + Settings.webport) == false)
+            {
+                e.Cancel = true;
+                Process.Start(e.Url.ToString());
+            }
+        }
+
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
             if (_exit == true)
@@ -1768,7 +1779,7 @@ namespace RealNews
                     }
                 }
                 // redo web browser content in theme
-                webView2.Reload();
+                webView2.CoreWebView2.Reload();
             }
         }
 
