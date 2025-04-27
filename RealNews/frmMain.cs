@@ -206,9 +206,9 @@ namespace RealNews
                             {
                                 _downloadImgList.TryDequeue(out string url);
                                 c++;
-                                string ret = DownloadImageFile(url);
+                                int returnCode = DownloadImageFile(url);
 
-                                if (ret.myContains("timed out")) // retry if timed out
+                                if (returnCode == Logger.TimeOut) // retry if timed out
                                 {
                                     _downloadImgList.Enqueue(url);
                                 }
@@ -242,29 +242,23 @@ namespace RealNews
             }
         }
 
-        private string DownloadImageFile(string url)
+        private int DownloadImageFile(string url)
         {
             if (string.IsNullOrEmpty(url))
             {
-                return "";
+                return 1;
             }
 
-            string ret = DownloadImage(url);
-            Log(ret);
-            return ret;
+            return DownloadImage(url);
         }
 
-        private string DownloadImage(string url)//string key, string url)
+        private int DownloadImage(string url)//string key, string url)
         {
-            string err = "";
-            url = Uri.UnescapeDataString(url);
-            //url = url.Replace("&amp;", "&");
-            url = url.Replace("amp;", "");
             if (_imageCache.Contains(url))
             {
-                return "Image already downloaded";
+                Log("Image already downloaded");
+                return 1;
             }
-
             try
             {
                 long len;
@@ -299,14 +293,26 @@ namespace RealNews
                 }
                 else
                 {
-                    err = $"Image over size limit {Settings.DownloadImagesUnderKB}KB : {len / 1024:#,#}KB.";
+                    throw new ImageSizeOverLimitException($"Image over size limit {Settings.DownloadImagesUnderKB}KB : {len / 1024:#,#}KB.");
                 }
+            }
+            catch (ImageSizeOverLimitException ex)
+            {
+                Log(ex.Message);
+                return Settings.DownloadImagesUnderKB;
+            }
+            catch (WebException ex)
+            {
+                // Probably a timeout error
+                Log(ex.Message);
+                return Logger.TimeOut;
             }
             catch (Exception ex)
             {
-                err = "Error downloading images : " + ex.Message;
+                Log("Error downloading images : " + ex.Message);
+                return 1;
             }
-            return err;
+            return 0;
         }
 
         private void MinuteTimer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
@@ -1556,31 +1562,38 @@ namespace RealNews
             List<string> imgs = new List<string>();
             foreach (var img in GetImagesInHTMLString(f.Description))
             {
-                var s = _imghrefregex.Match(img).Groups["href"].Value;
-                if (_imageCache.Contains(s) == false)
-                {
-                    imgs.Add(s);
-                }
+                string s = _imghrefregex.Match(img).Groups["href"].Value;
+                // Checking if the image's already been loaded later in DownloadImage
+                imgs.Add(s);
             }
             Task.Factory.StartNew(() =>
             {
-                string err = "";
+                int returnCode = 1;
                 foreach (var i in imgs)
                 {
                     string key = i.Replace(_localhostimageurl, "");
                     // string url = "https://" + key;
                     string url = key;
-                    err = DownloadImage(url);
+                    returnCode = DownloadImage(url);
                 }
-                Thread.Sleep(4000);
-                if (show)
+
+                if (returnCode == 0)
                 {
-                    Invoke(() =>
+                    Thread.Sleep(4000);
+                    if (show)
                     {
-                        ShowItem(f);
-                        if (err != "")
-                            Log(err);
-                    });
+                        Invoke(() =>
+                        {
+                            ShowItem(f);
+                            // Everything that needed to be logged has been logged already, commenting out the next if block
+                            /*
+                            if (err != "")
+                            {
+                                Log(err);
+                            }
+                            */
+                        });
+                    }
                 }
             });
         }
@@ -2063,7 +2076,7 @@ namespace RealNews
             }
             foreach (var i in im)
             {
-                var s = i.fn.ToLowerInvariant();
+                var s = i.filename.ToLowerInvariant();
                 if (imgs.ContainsKey(s))
                 {
                     imgs.Remove(s);

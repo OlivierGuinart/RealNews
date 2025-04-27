@@ -1,12 +1,18 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
-using System.Threading;
-using System.IO;
 using System.Threading.Tasks;
 
 namespace RealNews
 {
+    [Serializable]
+    public class ImageSizeOverLimitException : Exception
+    {
+        public ImageSizeOverLimitException() : base() { }
+        public ImageSizeOverLimitException(string message) : base(message) { }
+        public ImageSizeOverLimitException(string message, Exception inner) : base(message, inner) { }
+    }
+
     public interface ILog
     {
         /// <summary>
@@ -97,9 +103,11 @@ namespace RealNews
         }
     }
 
-    internal class logger : ILog
+    internal class Logger : ILog
     {
-        public logger(Type type)
+        public const int TimeOut = 408;
+
+        public Logger(Type type)
         {
             typename = type.Namespace + "." + type.Name;
         }
@@ -138,7 +146,7 @@ namespace RealNews
     {
         public static ILog GetLogger(Type obj)
         {
-            return new logger(obj);
+            return new Logger(obj);
         }
 
         public static void ConsoleMode()
