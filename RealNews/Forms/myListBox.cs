@@ -15,10 +15,12 @@ namespace RealNews
             this.DrawMode = DrawMode.OwnerDrawVariable;
             this.MeasureItem += MyListBox_MeasureItem;
             this.MouseClick += MyListBox_MouseClick;
+            this.MouseDoubleClick += MyListBox_MouseDoubleClick;
             this.KeyDown += MyListBox_KeyDown;
             this.DrawItem += MyListBox_DrawItem;
             this.DoubleBuffered = true;
         }
+
         public Color GroupColor { get; set; }
         public Color HighLightText { get; set; }
 
@@ -124,6 +126,29 @@ namespace RealNews
                 if (o.Id == "")
                 {
                     // FIX : select all in group
+                }
+            }
+        }
+
+        private void MyListBox_MouseDoubleClick(object sender, MouseEventArgs e)
+        {
+            if (this.SelectedItem != null)
+            {
+                var o = this.SelectedItem as FeedItem;
+                try
+                {
+                    Process.Start(o.Link);
+                }
+                catch (System.ComponentModel.Win32Exception noBrowser)
+                {
+                    if (noBrowser.ErrorCode == -2147467259)
+                    {
+                        MessageBox.Show(noBrowser.Message);
+                    }
+                }
+                catch (Exception other)
+                {
+                    MessageBox.Show(other.Message);
                 }
             }
         }
