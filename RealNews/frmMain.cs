@@ -442,8 +442,17 @@ namespace RealNews
 
             if (File.Exists(GetFeedFilename(f)))
             {
-                var list = JSON.ToObject<List<FeedItem>>(File.ReadAllText(GetFeedFilename(f)));
-                _feeditems.TryAdd(f.Title, list);
+                string fileText = File.ReadAllText(GetFeedFilename(f));
+                if (!string.IsNullOrEmpty(fileText))
+                {
+                    var list = JSON.ToObject<List<FeedItem>>(fileText);
+                    _feeditems.TryAdd(f.Title, list);
+                }
+                else
+                {
+                    f.UnreadCount = 0;
+                    _log.Warn($"Feed file '{f.Title}' is empty.");
+                }
             }
 
             if (File.Exists(fn))
@@ -453,7 +462,10 @@ namespace RealNews
                     rssImages.Images.Add(Image.FromFile(fn));
                     imgidx = rssImages.Images.Count - 1;
                 }
-                catch { }
+                catch 
+                {
+                    _log.Error($"Error while trying to add images for feed '{f.Title}'.");
+                }
             }
             tn = TreeViewHelper.AddTreeNode(treeView1, f.Folder, f, f.Title);
             tn.ImageIndex = imgidx;
@@ -1127,8 +1139,12 @@ namespace RealNews
                     {
                         if (File.Exists(GetFeedFilename(feed)))
                         {
-                            list = JSON.ToObject<List<FeedItem>>(File.ReadAllText(GetFeedFilename(feed)));
-                            _feeditems.TryAdd(feed.Title, list);
+                            string fileText = File.ReadAllText(GetFeedFilename(feed));
+                            if (!string.IsNullOrEmpty(fileText))
+                            {
+                                list = JSON.ToObject<List<FeedItem>>(fileText);
+                                _feeditems.TryAdd(feed.Title, list);
+                            }
                         }
                     }
                     if (list != null)
